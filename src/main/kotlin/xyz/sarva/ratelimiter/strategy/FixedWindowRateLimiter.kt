@@ -45,20 +45,20 @@ class FixedWindowRateLimiter(
         }
     }
 
-    private fun allowStrictlyAssumingOneThread(counter: StrictRequestCounter, now: Long): Boolean {
-            if (now - counter.windowStart >= config.windowSizeInMillis) {
-                counter.windowStart = now
-                counter.count = 1
-                return true
-            }
+ /*   private fun allowStrictlyAssumingOneThread(counter: StrictRequestCounter, now: Long): Boolean {
+        if (now - counter.windowStart >= config.windowSizeInMillis) {
+            counter.windowStart = now
+            counter.count = 1
+            return true
+        }
 
-            return if (counter.count < config.limit) {
-                counter.count++
-                true
-            } else {
-                handleLimitExceeded()
-            }
-    }
+        return if (counter.count < config.limit) {
+            counter.count++
+            true
+        } else {
+            handleLimitExceeded()
+        }
+    }*/
 
     private fun allowStrictly(counter: StrictRequestCounter, now: Long): Boolean {
         synchronized(counter) {
@@ -98,22 +98,15 @@ class FixedWindowRateLimiter(
 
     private fun allowOptimisticallyCas(counter: OptimisticRequestCounter, now: Long): Boolean {
         val currentWindowStart = counter.windowStart.get()
-        val windowEnd = currentWindowStart + config.windowSizeInMillis
 
-        if (now >= windowEnd) {
-            /*
-            * Do not retry in case of failure
-            * */
+        if (now - currentWindowStart >= config.windowSizeInMillis) {
             val won = counter.windowStart.compareAndSet(currentWindowStart, now)
             if (won) {
-                // Successfully reset window
                 counter.count.set(1)
                 return true
             }
-            // Someone else reset — fall through to normal path
         }
 
-        // Count check without retrying anything
         return if (counter.count.get() < config.limit) {
             counter.count.getAndIncrement()
             true
@@ -127,8 +120,6 @@ class FixedWindowRateLimiter(
             RateLimiterConfig.LimitExceedStrategy.REJECT -> false
         }
     }
-
-    // ---- Separate counter classes ----
 
     private class StrictRequestCounter(
         var count: Long,
