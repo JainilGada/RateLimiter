@@ -3,6 +3,7 @@ plugins {
     kotlin("plugin.spring") version "1.9.25"
     id("org.springframework.boot") version "3.5.3"
     id("io.spring.dependency-management") version "1.1.7"
+    id("me.champeau.jmh") version "0.7.2"
 }
 
 group = "xyz.sarva"
@@ -16,6 +17,11 @@ java {
 
 repositories {
     mavenCentral()
+}
+
+dependencies {
+    implementation("org.openjdk.jmh:jmh-core:1.37")
+    annotationProcessor("org.openjdk.jmh:jmh-generator-annprocess:1.37")
 }
 
 dependencies {

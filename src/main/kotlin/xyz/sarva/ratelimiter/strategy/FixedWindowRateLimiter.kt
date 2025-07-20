@@ -20,25 +20,46 @@ class FixedWindowRateLimiter(
     override fun allowKey(key: String,): Boolean {
         val now = System.currentTimeMillis()
         val counter = requestMap.computeIfAbsent(key) {
-            RequestCounter(AtomicLong(0), now)
+            RequestCounter(AtomicLong(0), AtomicLong(now))
         }
 
-        val isAllowed = if (config.optimistic) {
-            allowOptimistically(counter, now)
-        } else {
-            allowStrictly(counter, now)
+        val isAllowed = when {
+            config.optimistic && config.useCAS -> allowOptimisticallyCas(counter, now)
+            config.optimistic -> allowOptimisticallyWithLock(counter, now)
+            else -> allowStrictly(counter, now)
         }
 
        // if (!isAllowed) println("Rate limit exceeded for key: $key")
         return isAllowed
     }
 
-    private fun allowOptimistically(counter: RequestCounter, now: Long): Boolean {
-        if (now - counter.windowStart >= config.windowSizeInMillis) {
+    private fun allowOptimisticallyCas(counter: RequestCounter, now: Long): Boolean {
+        val windowStart = counter.windowStart.get()
+        val windowEnd = windowStart + config.windowSizeInMillis
+
+        if (now >= windowEnd) {
+            if (counter.windowStart.compareAndSet(windowStart, now)) {
+                counter.count.set(1)
+                return true
+            }
+            // CAS failed: another thread already reset the window
+        }
+
+        return if (counter.count.get() < config.limit) {
+            counter.count.getAndIncrement()
+            true
+        } else {
+            handleLimitExceeded()
+        }
+    }
+
+
+    private fun allowOptimisticallyWithLock(counter: RequestCounter, now: Long): Boolean {
+        if (now - counter.windowStart.get() >= config.windowSizeInMillis) {
             synchronized(counter) {
                 // Re-check inside lock to avoid race
-                if (now - counter.windowStart >= config.windowSizeInMillis) {
-                    counter.windowStart = now
+                if (now - counter.windowStart.get() >= config.windowSizeInMillis) {
+                    counter.windowStart = AtomicLong(now)
                     counter.count.set(1)
                     return true
                 }
@@ -55,8 +76,8 @@ class FixedWindowRateLimiter(
 
     private fun allowStrictly(counter: RequestCounter, now: Long): Boolean {
         synchronized(counter) {
-            if (now - counter.windowStart >= config.windowSizeInMillis) {
-                counter.windowStart = now
+            if (now - counter.windowStart.get() >= config.windowSizeInMillis) {
+                counter.windowStart = AtomicLong(now)
                 counter.count.set(1)
                 return true
             }
@@ -80,6 +101,6 @@ class FixedWindowRateLimiter(
 
     private class RequestCounter(
         var count: AtomicLong,
-        @Volatile var windowStart: Long
+        @Volatile var windowStart: AtomicLong
     )
 }

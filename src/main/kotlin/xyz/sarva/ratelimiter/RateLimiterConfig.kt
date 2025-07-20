@@ -9,7 +9,8 @@ data class RateLimiterConfig(
     val strategyType: StrategyType = StrategyType.FIXED_WINDOW,
     val exceedStrategy: LimitExceedStrategy = LimitExceedStrategy.REJECT,
     val keyResolver: (RequestContext) -> String?,
-    val optimistic: Boolean = false
+    val optimistic: Boolean = false,
+    val useCAS: Boolean = false,
 ) {
     /**
      * Enum representing different rate limiting algorithms.

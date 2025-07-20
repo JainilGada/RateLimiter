@@ -8,6 +8,12 @@ data class TestCase(
     val comment: String
 )
 
+enum class Mode(val label: String) {
+    STRICT("Strict"),
+    OPTIMISTIC_LOCK("OptimisticWithLock"),
+    OPTIMISTIC_CAS("OptimisticCAS")
+}
+
 val testCases = listOf(
     TestCase(
         name = "Low limit, short window",
@@ -44,4 +50,19 @@ val testCases = listOf(
         totalRequests = 1_000_000,
         comment = "Balanced use-case. Measures both performance and correctness under moderate load."
     )
+)
+
+
+val testCases2 = listOf(
+    TestCase("Low limit, short window", 100, 1000, 5_000_000, "High contention, burst load"),
+    TestCase("High limit, short window", 100, 500_000, 1_000_000, "Few resets, high QPS"),
+    TestCase("Low limit, long window", 60_000, 100, 500_000, "Sustained low QPS"),
+    TestCase("High limit, long window", 60_000, 1_000_000, 5_000_000, "API quotas, long-running"),
+    TestCase("Moderate, moderate", 5000, 10_000, 1_000_000, "Balanced, realistic case")
+)
+
+val modes = listOf(
+    Mode.STRICT,
+    Mode.OPTIMISTIC_LOCK,
+    Mode.OPTIMISTIC_CAS
 )
