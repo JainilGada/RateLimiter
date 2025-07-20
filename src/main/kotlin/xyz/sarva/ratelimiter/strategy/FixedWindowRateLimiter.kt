@@ -10,56 +10,63 @@ class FixedWindowRateLimiter(
     private val config: RateLimiterConfig
 ) : RateLimiter {
 
-    private val requestMap = ConcurrentHashMap<String, RequestCounter>()
+    private val strictMap = ConcurrentHashMap<String, StrictRequestCounter>()
+    private val optimisticMap = ConcurrentHashMap<String, OptimisticRequestCounter>()
 
     override fun allowRequest(context: RequestContext): Boolean {
         val key = config.keyResolver(context)
         return key?.let { allowKey(it) } ?: false
     }
 
-    override fun allowKey(key: String,): Boolean {
+    override fun allowKey(key: String): Boolean {
         val now = System.currentTimeMillis()
-        val counter = requestMap.computeIfAbsent(key) {
-            RequestCounter(AtomicLong(0), AtomicLong(now))
-        }
 
-        val isAllowed = when {
-            config.optimistic && config.useCAS -> allowOptimisticallyCas(counter, now)
-            config.optimistic -> allowOptimisticallyWithLock(counter, now)
-            else -> allowStrictly(counter, now)
-        }
+        return when {
+            config.optimistic && config.useCAS -> {
+                val counter = optimisticMap.computeIfAbsent(key) {
+                    OptimisticRequestCounter(AtomicLong(0), AtomicLong(now))
+                }
+                allowOptimisticallyCas(counter, now)
+            }
 
-       // if (!isAllowed) println("Rate limit exceeded for key: $key")
-        return isAllowed
+            config.optimistic -> {
+                val counter = optimisticMap.computeIfAbsent(key) {
+                    OptimisticRequestCounter(AtomicLong(0), AtomicLong(now))
+                }
+                allowOptimisticallyWithLock(counter, now)
+            }
+
+            else -> {
+                val counter = strictMap.computeIfAbsent(key) {
+                    StrictRequestCounter(0, now)
+                }
+                allowStrictly(counter, now)
+            }
+        }
     }
 
-    private fun allowOptimisticallyCas(counter: RequestCounter, now: Long): Boolean {
-        val windowStart = counter.windowStart.get()
-        val windowEnd = windowStart + config.windowSizeInMillis
-
-        if (now >= windowEnd) {
-            if (counter.windowStart.compareAndSet(windowStart, now)) {
-                counter.count.set(1)
+    private fun allowStrictly(counter: StrictRequestCounter, now: Long): Boolean {
+        synchronized(counter) {
+            if (now - counter.windowStart >= config.windowSizeInMillis) {
+                counter.windowStart = now
+                counter.count = 1
                 return true
             }
-            // CAS failed: another thread already reset the window
-        }
 
-        return if (counter.count.get() < config.limit) {
-            counter.count.getAndIncrement()
-            true
-        } else {
-            handleLimitExceeded()
+            return if (counter.count < config.limit) {
+                counter.count++
+                true
+            } else {
+                handleLimitExceeded()
+            }
         }
     }
 
-
-    private fun allowOptimisticallyWithLock(counter: RequestCounter, now: Long): Boolean {
+    private fun allowOptimisticallyWithLock(counter: OptimisticRequestCounter, now: Long): Boolean {
         if (now - counter.windowStart.get() >= config.windowSizeInMillis) {
             synchronized(counter) {
-                // Re-check inside lock to avoid race
                 if (now - counter.windowStart.get() >= config.windowSizeInMillis) {
-                    counter.windowStart = AtomicLong(now)
+                    counter.windowStart.set(now)
                     counter.count.set(1)
                     return true
                 }
@@ -74,24 +81,24 @@ class FixedWindowRateLimiter(
         }
     }
 
-    private fun allowStrictly(counter: RequestCounter, now: Long): Boolean {
-        synchronized(counter) {
-            if (now - counter.windowStart.get() >= config.windowSizeInMillis) {
-                counter.windowStart = AtomicLong(now)
+    private fun allowOptimisticallyCas(counter: OptimisticRequestCounter, now: Long): Boolean {
+        val windowStart = counter.windowStart.get()
+        val windowEnd = windowStart + config.windowSizeInMillis
+
+        if (now >= windowEnd) {
+            if (counter.windowStart.compareAndSet(windowStart, now)) {
                 counter.count.set(1)
                 return true
             }
+        }
 
-            return if (counter.count.get() < config.limit) {
-                counter.count.getAndIncrement()
-                true
-            } else {
-                handleLimitExceeded()
-            }
+        return if (counter.count.get() < config.limit) {
+            counter.count.getAndIncrement()
+            true
+        } else {
+            handleLimitExceeded()
         }
     }
-
-
 
     private fun handleLimitExceeded(): Boolean {
         return when (config.exceedStrategy) {
@@ -99,8 +106,15 @@ class FixedWindowRateLimiter(
         }
     }
 
-    private class RequestCounter(
-        var count: AtomicLong,
-        @Volatile var windowStart: AtomicLong
+    // ---- Separate counter classes ----
+
+    private class StrictRequestCounter(
+        var count: Long,
+        var windowStart: Long
+    )
+
+    private class OptimisticRequestCounter(
+        val count: AtomicLong,
+        val windowStart: AtomicLong
     )
 }

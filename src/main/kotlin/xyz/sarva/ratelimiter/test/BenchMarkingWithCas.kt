@@ -12,7 +12,7 @@ fun runBenchmarksWithCas() {
     val users = listOf("user1")
     val threadCount = 8
 
-    for (testCase in testCases) {
+    for (testCase in testCases2) {
         for (mode in modes) {
             val config = RateLimiterConfig(
                 limit = testCase.limit,
