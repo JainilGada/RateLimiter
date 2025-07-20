@@ -40,7 +40,7 @@ class FixedWindowRateLimiter(
                 val counter = strictMap.computeIfAbsent(key) {
                     StrictRequestCounter(0, now)
                 }
-                allowStrictlyAssumingOneThread(counter, now)
+                allowStrictly(counter, now)
             }
         }
     }
@@ -100,7 +100,6 @@ class FixedWindowRateLimiter(
         val currentWindowStart = counter.windowStart.get()
         val windowEnd = currentWindowStart + config.windowSizeInMillis
 
-        // Window expired: try to reset
         if (now >= windowEnd) {
             /*
             * Do not retry in case of failure
@@ -122,7 +121,6 @@ class FixedWindowRateLimiter(
             handleLimitExceeded()
         }
     }
-
 
     private fun handleLimitExceeded(): Boolean {
         return when (config.exceedStrategy) {
