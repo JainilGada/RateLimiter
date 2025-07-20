@@ -40,9 +40,24 @@ class FixedWindowRateLimiter(
                 val counter = strictMap.computeIfAbsent(key) {
                     StrictRequestCounter(0, now)
                 }
-                allowStrictly(counter, now)
+                allowStrictlyAssumingOneThread(counter, now)
             }
         }
+    }
+
+    private fun allowStrictlyAssumingOneThread(counter: StrictRequestCounter, now: Long): Boolean {
+            if (now - counter.windowStart >= config.windowSizeInMillis) {
+                counter.windowStart = now
+                counter.count = 1
+                return true
+            }
+
+            return if (counter.count < config.limit) {
+                counter.count++
+                true
+            } else {
+                handleLimitExceeded()
+            }
     }
 
     private fun allowStrictly(counter: StrictRequestCounter, now: Long): Boolean {
@@ -82,16 +97,24 @@ class FixedWindowRateLimiter(
     }
 
     private fun allowOptimisticallyCas(counter: OptimisticRequestCounter, now: Long): Boolean {
-        val windowStart = counter.windowStart.get()
-        val windowEnd = windowStart + config.windowSizeInMillis
+        val currentWindowStart = counter.windowStart.get()
+        val windowEnd = currentWindowStart + config.windowSizeInMillis
 
+        // Window expired: try to reset
         if (now >= windowEnd) {
-            if (counter.windowStart.compareAndSet(windowStart, now)) {
+            /*
+            * Do not retry in case of failure
+            * */
+            val won = counter.windowStart.compareAndSet(currentWindowStart, now)
+            if (won) {
+                // Successfully reset window
                 counter.count.set(1)
                 return true
             }
+            // Someone else reset — fall through to normal path
         }
 
+        // Count check without retrying anything
         return if (counter.count.get() < config.limit) {
             counter.count.getAndIncrement()
             true
@@ -99,6 +122,7 @@ class FixedWindowRateLimiter(
             handleLimitExceeded()
         }
     }
+
 
     private fun handleLimitExceeded(): Boolean {
         return when (config.exceedStrategy) {
